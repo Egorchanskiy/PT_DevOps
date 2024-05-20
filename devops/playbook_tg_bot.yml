@@ -1,0 +1,219 @@
+- name: Setup
+  hosts: all
+  become: true
+
+- hosts: postgresql_master
+  vars_files:
+    - env.yaml
+  tasks:
+    - name: run apt install
+      become: true
+      apt:
+        name: postgresql, python3, python3-pip
+        state: present
+
+    - name: install psycopg2-binary
+      become: true
+      become_user: postgres
+      pip:
+        name: psycopg2-binary
+        state: present
+
+    - name: mkdir /oracle/pg_data/archive/
+      become: true
+      ansible.builtin.file:
+        path: /oracle/pg_data/archive/
+        state: directory
+        mode: '0777'
+        recurse: yes
+
+    - name: bot DB create
+      become: true
+      become_user: postgres
+      postgresql_db:
+        name: "{{ DB_DATABASE }}"
+        state: present
+
+    - name: bot DB change user and password
+      postgresql_user:
+        db: "{{ DB_DATABASE }}"
+        name: postgres
+        password: "{{ DB_PASSWORD }}"
+      become: yes
+      become_user: postgres
+
+    - name: copy init.sql
+      copy:
+        src: "init.sql"
+        dest: "~/init.sql"
+
+    - name: read SQL script
+      slurp:
+        src: init.sql
+      register: init_sql
+
+    - name: execute sql file query
+      become: yes
+      become_user: postgres
+      postgresql_query:
+        db: "{{ DB_DATABASE }}"
+        query: "{{ init_sql.content | b64decode }}"
+        login_user: postgres
+        login_password: "{{ DB_PASSWORD }}"
+
+    - name: change pg_hba.conf
+      become: true
+      become_user: postgres
+      postgresql_pg_hba:
+        dest: /etc/postgresql/14/main/pg_hba.conf
+        contype: host
+        source: "{{ DB_REPL_HOST }}/24"
+        users: "{{ DB_REPL_USER }} "
+        databases: replication
+        method: scram-sha-256
+        create: true
+
+    - name: change pg_hba.conf
+      become: true
+      become_user: postgres
+      postgresql_pg_hba:
+        dest: /etc/postgresql/14/main/pg_hba.conf
+        contype: host
+        source:  "{{ DB_HOST }}/32"
+        users: all
+        databases: all
+        method: password
+        create: true
+
+    - name: set config
+      become: true
+      become_user: postgres
+      community.postgresql.postgresql_set:
+        name: "{{ item.key }}"
+        value: "{{ item.value }}"
+      with_dict:
+        archive_mode: 'on'
+        archive_command: 'cp %p /oracle/pg_data/archive/%f'
+        max_wal_senders: '10'
+        wal_level: 'replica'
+        log_replication_commands: 'on'
+        wal_log_hints: 'on'
+        logging_collector: 'on'
+        log_directory: '/var/log/postgresql'
+        log_filename: 'postgresql.log'
+        listen_addresses: '*'
+
+    - service:
+        name: postgresql
+        state: stopped
+      become: true
+
+    - service:
+        name: postgresql
+        state: started
+      become: true
+
+- hosts: postgresql_slave
+  vars_files:
+    - env.yaml
+  tasks:
+    - name: run apt install
+      become: true
+      apt:
+        name: postgresql, python3, python3-pip
+        state: present
+
+    - name: install python packages
+      become: true
+      pip:
+        name: psycopg2-binary
+        state: present
+
+    - service:
+        name: postgresql
+        state: started
+      become: true
+
+    - name: set postgresql options
+      become_user: postgres
+      become: true
+      community.postgresql.postgresql_set:
+        name: "listen_addresses"
+        value: "localhost, {{ DB_HOST }}"
+
+    - service:
+        name: postgresql
+        state: stopped
+      become: true
+
+    - file:
+        path: /var/lib/postgresql/14/main/
+        state: absent
+      become: true
+
+    - file:
+        path: /var/lib/postgresql/14/main/
+        owner: postgres
+        group: postgres
+        mode: 0700
+        state: directory
+      become: true
+
+    - name: replicate data from master DB
+      become: true
+      become_user: postgres
+      retries: 3
+      delay: 10
+      register: result
+      until: result.rc == 0
+      shell: |
+        export PGPASSWORD="{{ DB_REPL_PASSWORD }}" &&
+        pg_basebackup -R -h {{ DB_HOST }} -U {{ DB_REPL_USER }} -D /var/lib/postgresql/14/main -P -v
+
+    - service:
+        name: postgresql
+        state: started
+      become: true
+
+
+- hosts: telegram_bot
+  vars_files:
+    - env.yaml
+  tasks:
+    - name: install libpq-dev for psycopg2
+      become: true
+      apt:
+        name: libpq-dev
+        state: present
+
+    - name: check bot project directory exists
+      stat:
+        path: "/home/ubreg/app"
+      register: bot_dir
+
+    - name: remove project directory if it exists
+      file:
+        path: "/home/ubreg/app"
+        state: absent
+      when: bot_dir.stat.exists
+
+    - name: Clone Telegram Bot Repository
+      ansible.builtin.git:
+        repo: "https://github.com/Egorchanskiy/PT_DevOps"
+        dest: "/home/ubreg/project"
+        update: yes
+        version: docker
+
+    - name: pip install
+      become: true
+      pip:
+        requirements: "/home/ubreg/project/app/bot/requirements.txt"
+
+    - name: copy .env for ansible to remote host
+      copy:
+        src: ".env"
+        dest: "/home/ubreg/project/.env"
+
+    - name: run bot
+      become: true
+      command: "python3 /home/ubreg/project/app/bot/bot.py"
