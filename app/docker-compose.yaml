@@ -1,0 +1,75 @@
+version: '3'
+
+services:
+  bot:
+    image: bot_image
+    build: ./bot  # Указываем директорию с Dockerfile
+    container_name: tgbot
+    command: python bot.py
+    restart: always
+    depends_on:
+      - db
+      - db_repl
+    volumes:
+      - pg_logs:/var/log/
+    env_file:
+      - .env
+    networks:
+      net:
+        ipv4_address: 192.168.0.20
+
+  db:
+    image: db_image
+    build: ./db
+    container_name: db
+    environment:
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - DB_REPL_USER=${DB_REPL_USER}
+      - DB_REPL_PASSWORD=${DB_REPL_PASSWORD}
+      - DB_REPL_HOST=${DB_REPL_HOST}
+      - DB_REPL_PORT=${DB_REPL_PORT}
+      - DB_PORT=${DB_PORT}
+      - DB_DATABASE=${DB_DATABASE}
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    env_file:
+      - .env
+    restart: always
+    volumes:
+      - pg_logs:/var/log/
+    networks:
+      net:
+        ipv4_address: 192.168.0.21
+
+  db_repl:
+    image: db_repl_image
+    build: ./db_repl
+    container_name: db_repl
+    restart: always
+    environment:
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+      - DB_REPL_HOST=${DB_REPL_HOST}
+      - DB_REPL_PORT=${DB_REPL_PORT}
+      - DB_REPL_USER=${DB_REPL_USER}
+      - DB_REPL_PASSWORD=${DB_REPL_PASSWORD}
+      - PGUSER=${DB_REPL_USER}
+      - PGPASSWORD=${DB_REPL_PASSWORD}
+    env_file:
+      - .env
+    depends_on:
+      - db
+    networks:
+      net:
+        ipv4_address: 192.168.0.22
+
+volumes:
+  pg_logs:
+
+networks:
+  net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.0.0/24
+          gateway: 192.168.0.1
