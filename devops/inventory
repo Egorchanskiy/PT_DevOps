@@ -1,0 +1,4 @@
+[hosts]
+postgresql_master   ansible_host={{DB_HOST}} ansible_user=ubreg    ansible_password=ubreg
+postgresql_slave    ansible_host={{DB_REPL_HOST}} ansible_user=ubreg    ansible_password=ubreg
+telegram_bot        ansible_host={{DB_HOST}} ansible_user=ubreg    ansible_password=ubreg

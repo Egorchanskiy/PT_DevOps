@@ -1,0 +1,11 @@
+DO
+$$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname ='repl_user') THEN
+    CREATE USER repl_user WITH REPLICATION ENCRYPTED PASSWORD 'repl_password';
+  END IF;
+END
+$$;
+
+CREATE TABLE IF NOT EXISTS Phones (phoneID SERIAL PRIMARY KEY, phone VARCHAR(16));
+CREATE TABLE IF NOT EXISTS Emails (emailID SERIAL PRIMARY KEY, email VARCHAR(255));
